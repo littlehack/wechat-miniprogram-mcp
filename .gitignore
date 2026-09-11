@@ -1,0 +1,9 @@
+node_modules/
+*.log
+*.log.*
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.env
+.env.*

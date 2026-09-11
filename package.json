@@ -1,0 +1,46 @@
+{
+  "name": "wechat-miniprogram-mcp",
+  "version": "2.0.0",
+  "description": "微信小程序逆向 MCP Server - JS 动态逆向调试工具，支持脚本枚举、搜索、断点调试、函数跟踪、网络请求捕获",
+  "type": "module",
+  "bin": {
+    "wechat-miniprogram-mcp": "build/index.js"
+  },
+  "main": "build/index.js",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('build', {recursive: true, force: true})\"",
+    "build": "npm run clean && tsc && node -e \"const fs=require('fs');fs.cpSync('src/third_party','build/third_party',{recursive:true})\"",
+    "typecheck": "tsc --noEmit",
+    "start": "npm run build && node build/index.js",
+    "start:debug": "DEBUG=mcp:* npm run build && node build/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "javascript",
+    "reverse-engineering",
+    "cdp",
+    "debugging",
+    "frida",
+    "wechat",
+    "miniprogram",
+    "chrome-devtools"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "frida": "^17.3.2",
+    "protobufjs": "^7.5.4",
+    "puppeteer-core": "^25.10.0",
+    "ws": "^8.18.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.3",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.12.0 || >=23"
+  }
+}
