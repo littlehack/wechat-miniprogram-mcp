@@ -3,31 +3,8 @@
  * 提供微信小程序特有的逆向分析功能
  * 通过 CDP 协议与小程序通信
  */
-import { z } from 'zod';
-/** 工具分类枚举 */
-export declare enum ToolCategory {
-    /** 小程序专用工具 */
-    MINIPROGRAM = "miniprogram",
-    /** 网络相关工具 */
-    NETWORK = "network",
-    /** 脚本相关工具 */
-    SCRIPT = "script",
-    /** 调试相关工具 */
-    DEBUGGER = "debugger"
-}
-/** 工具定义接口 */
-export interface ToolDefinition {
-    /** 工具名称 */
-    name: string;
-    /** 工具描述 */
-    description: string;
-    /** 工具分类 */
-    category: ToolCategory;
-    /** 输入参数 schema */
-    schema: z.ZodRawShape;
-    /** 工具处理函数 */
-    handler: (params: any) => Promise<any>;
-}
+import { ToolCategory, type ToolDefinition } from './tool-category.js';
+export { ToolCategory, type ToolDefinition };
 /**
  * 连接 CDP 工具
  * 手动启动调试服务器和 CDP 代理，并连接到微信小程序
@@ -91,6 +68,5 @@ export declare const searchAndAutoBreak: ToolDefinition;
  * 也可注入 Hook 捕获 wx.request 调用
  */
 export declare const captureAppServiceNetwork: ToolDefinition;
-/** 所有微信小程序工具 */
 export declare const wechatTools: ToolDefinition[];
 //# sourceMappingURL=wechat-miniprogram.d.ts.map

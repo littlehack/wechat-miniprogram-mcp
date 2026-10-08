@@ -12,32 +12,10 @@ import {ensureServersStarted, isProxyStarted, waitForMiniProgram, isMiniProgramC
 import {infoLogger, errorLogger} from '../logger.js';
 import {fridaServer} from '../frida-inject.js';
 import {autoOpenDevTools} from '../browser-opener.js';
+import {ToolCategory, type ToolDefinition} from './tool-category.js';
 
-/** 工具分类枚举 */
-export enum ToolCategory {
-  /** 小程序专用工具 */
-  MINIPROGRAM = 'miniprogram',
-  /** 网络相关工具 */
-  NETWORK = 'network',
-  /** 脚本相关工具 */
-  SCRIPT = 'script',
-  /** 调试相关工具 */
-  DEBUGGER = 'debugger',
-}
-
-/** 工具定义接口 */
-export interface ToolDefinition {
-  /** 工具名称 */
-  name: string;
-  /** 工具描述 */
-  description: string;
-  /** 工具分类 */
-  category: ToolCategory;
-  /** 输入参数 schema */
-  schema: z.ZodRawShape;
-  /** 工具处理函数 */
-  handler: (params: any) => Promise<any>;
-}
+// 重新导出 ToolCategory 和 ToolDefinition 以便其他模块可以使用
+export {ToolCategory, type ToolDefinition};
 
 /**
  * 连接 CDP 工具
@@ -1535,6 +1513,9 @@ export const captureAppServiceNetwork: ToolDefinition = {
 };
 
 /** 所有微信小程序工具 */
+import {triggerTarget} from './trigger-target.js';
+import {traceRequest} from './trace-request.js';
+
 export const wechatTools = [
   connectCdp,
   disconnectCdp,

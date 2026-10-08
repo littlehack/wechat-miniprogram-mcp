@@ -143,6 +143,74 @@ export interface SourceRangeResult {
     }>;
     isCompressed: boolean;
 }
+/** 函数索引条目 */
+export interface FunctionIndexEntry {
+    name: string;
+    scriptId: string;
+    url: string;
+    startOffset: number;
+    endOffset: number;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+    type: 'function' | 'method' | 'arrow' | 'class' | 'constructor';
+    /** 是否为生命周期方法 */
+    isLifecycle: boolean;
+    /** 是否为事件处理函数 */
+    isEventHandler: boolean;
+    /** 是否为网络请求相关 */
+    isNetworkRelated: boolean;
+}
+/** 字符串索引条目 */
+export interface StringIndexEntry {
+    value: string;
+    scriptId: string;
+    url: string;
+    offset: number;
+    lineNumber: number;
+    columnNumber: number;
+    /** 是否为 URL 字符串 */
+    isUrl: boolean;
+    /** 是否为 API 路径 */
+    isApiPath: boolean;
+    /** 是否为加密/签名相关 */
+    isCryptoRelated: boolean;
+}
+/** URL/API 索引条目 */
+export interface UrlApiIndexEntry {
+    url: string;
+    scriptId: string;
+    scriptUrl: string;
+    offset: number;
+    lineNumber: number;
+    columnNumber: number;
+    /** 请求方法（如 POST, GET） */
+    method?: string;
+    /** 是否为加密/签名相关调用 */
+    isCryptoRelated: boolean;
+}
+/** 代码分析候选结果 */
+export interface AnalysisCandidate {
+    function: string;
+    scriptId: string;
+    url: string;
+    line: number;
+    column: number;
+    callers: Array<{
+        function: string;
+        scriptId: string;
+        line: number;
+    }>;
+    callees: Array<{
+        function: string;
+        scriptId: string;
+        line: number;
+    }>;
+    relatedStrings: string[];
+    relatedUrls: string[];
+    reason: string;
+}
 /** CDP 客户端类 */
 export declare class CDPClient {
     private ws;
@@ -171,6 +239,11 @@ export declare class CDPClient {
     private appServiceTarget;
     private appServiceDebuggerEnabled;
     private sourceCache;
+    private functionIndex;
+    private allFunctions;
+    private stringIndex;
+    private urlApiIndex;
+    private indexBuilt;
     private directWsUrl?;
     constructor(cdpPort?: number, debugPort?: number, debugMain?: boolean);
     /**
@@ -313,6 +386,79 @@ export declare class CDPClient {
      * 清空源码缓存
      */
     clearSourceCache(): void;
+    /**
+     * 构建增强的 Script Registry 索引
+     * 解析所有已缓存脚本，建立函数、字符串、URL 索引
+     */
+    buildIndex(): void;
+    /**
+     * 从源码中提取函数定义
+     */
+    private extractFunctions;
+    /**
+     * 查找匹配的右花括号位置
+     */
+    private findMatchingBrace;
+    /**
+     * 从源码中提取字符串字面量
+     */
+    private extractStrings;
+    /**
+     * 从源码中提取 URL 和 API 路径
+     */
+    private extractUrls;
+    /**
+     * 反向分析：根据查询找到候选函数
+     * MCP 自己完成搜索、索引、排序和关联
+     */
+    reverseAnalyze(query: string): AnalysisCandidate[];
+    /**
+     * 构建候选结果
+     */
+    private buildCandidate;
+    /**
+     * 查找包含指定偏移量的函数
+     */
+    private findContainingFunction;
+    /**
+     * 查找函数的调用者
+     */
+    findCallers(functionName: string, scriptId?: string): Array<{
+        function: string;
+        scriptId: string;
+        line: number;
+    }>;
+    /**
+     * 查找函数体内调用的其他函数
+     */
+    findCallees(scriptId: string, startOffset: number, endOffset: number): Array<{
+        function: string;
+        scriptId: string;
+        line: number;
+    }>;
+    /**
+     * 转义正则表达式特殊字符
+     */
+    private escapeRegex;
+    /**
+     * 查找函数定义位置
+     */
+    findFunction(name: string): FunctionIndexEntry[];
+    /**
+     * 检查索引是否已构建
+     */
+    isIndexBuilt(): boolean;
+    /**
+     * 获取索引统计
+     */
+    getIndexStats(): {
+        functions: number;
+        strings: number;
+        urls: number;
+        lifecycleMethods: number;
+        eventHandlers: number;
+        networkRelated: number;
+    };
     /**
      * 断开连接
      */

@@ -9,8 +9,11 @@
  * - wechatTools: 微信小程序专用工具（仅在微信环境使用）
  */
 export { wechatTools, connectCdp, disconnectCdp, getMiniProgramStatus, listContexts, switchContext, interceptNetworkRequests, extractCodeBundle, getScriptSource, hookMiniProgramApi, getStorageData, analyzeEncryptionParams, extractPageBusinessLogic, searchAndAutoBreak, captureAppServiceNetwork } from './wechat-miniprogram.js';
+export { triggerTarget } from './trigger-target.js';
+export { traceRequest } from './trace-request.js';
 export { jsReverseTools, evaluateScript, searchInSources, searchInScript, getSourceRange, setBreakpoint, getCallStack, watchVariable, deobfuscateCode, getPausedInfo, listBreakpoints, removeBreakpoint, setBreakpointOnText, evaluateOnCallFrame } from './js-reverse.js';
 export { jsReverseExtendedTools, listNetworkRequests, clearNetworkRequests, getRequestInitiator, breakOnXhr, listScripts, saveScriptSource, listConsoleMessages, takeScreenshot, clearSiteData, clickElement, selectFrame } from './js-reverse-extended.js';
 export { functionTracingTools, traceFunction, getTraceResults, stopTrace, batchHook } from './function-tracing.js';
 export { ToolCategory, type ToolDefinition } from './wechat-miniprogram.js';
+export { reverseAnalysisTools } from './reverse-analysis.js';
 //# sourceMappingURL=index.d.ts.map

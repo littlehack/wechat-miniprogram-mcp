@@ -30,7 +30,7 @@ import {fileURLToPath} from 'node:url';
 import {parseCliOptions, type CliOptions} from './cli.js';
 import {startDebugServer, startCdpProxyServer, isProxyStarted} from './cdp-proxy.js';
 import {setLogFile, infoLogger, errorLogger} from './logger.js';
-import {wechatTools, jsReverseTools, jsReverseExtendedTools, functionTracingTools, type ToolDefinition} from './tools/index.js';
+import {wechatTools, jsReverseTools, jsReverseExtendedTools, functionTracingTools, reverseAnalysisTools, triggerTarget, traceRequest, type ToolDefinition} from './tools/index.js';
 
 // 获取当前文件目录
 const __filename = fileURLToPath(import.meta.url);
@@ -82,6 +82,12 @@ CDP 链接格式: devtools://devtools/bundled/inspector.html?ws=127.0.0.1:{cdpPo
   break_on_xhr: 设置网络请求断点
   list_network_requests: 查看捕获的网络请求
   trace_function: 函数调用跟踪
+  reverse_analyze: 高级逆向分析（自动搜索、索引、排序候选函数）
+  trigger_target: 自动触发微信小程序操作（页面切换、按钮点击等）
+  trace_request: 请求溯源（找到触发网络请求的函数调用链）
+  find_function: 查找函数定义位置
+  find_callers: 查找函数的调用者
+  find_callees: 查找函数体内的被调用者
 
 注意事项：
 - 确保目标环境已启用 CDP 调试（如 Chrome --remote-debugging-port）
@@ -100,7 +106,7 @@ function registerTool(server: McpServer, tool: ToolDefinition): void {
     tool.name,
     tool.description,
     tool.schema,
-    async (params) => {
+    async (params: any) => {
       try {
         const result = await tool.handler(params);
         return {
@@ -152,7 +158,7 @@ async function main(): Promise<void> {
   });
 
   // 注册所有工具
-  const allTools = [...jsReverseTools, ...jsReverseExtendedTools, ...functionTracingTools, ...wechatTools];
+  const allTools = [...jsReverseTools, ...jsReverseExtendedTools, ...functionTracingTools, ...wechatTools, ...reverseAnalysisTools, triggerTarget, traceRequest];
   for (const tool of allTools) {
     registerTool(server, tool);
     infoLogger(`注册工具: ${tool.name}`);

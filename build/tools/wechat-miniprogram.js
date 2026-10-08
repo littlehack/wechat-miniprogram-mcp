@@ -11,18 +11,9 @@ import { ensureServersStarted, isProxyStarted, waitForMiniProgram, isMiniProgram
 import { infoLogger, errorLogger } from '../logger.js';
 import { fridaServer } from '../frida-inject.js';
 import { autoOpenDevTools } from '../browser-opener.js';
-/** 工具分类枚举 */
-export var ToolCategory;
-(function (ToolCategory) {
-    /** 小程序专用工具 */
-    ToolCategory["MINIPROGRAM"] = "miniprogram";
-    /** 网络相关工具 */
-    ToolCategory["NETWORK"] = "network";
-    /** 脚本相关工具 */
-    ToolCategory["SCRIPT"] = "script";
-    /** 调试相关工具 */
-    ToolCategory["DEBUGGER"] = "debugger";
-})(ToolCategory || (ToolCategory = {}));
+import { ToolCategory } from './tool-category.js';
+// 重新导出 ToolCategory 和 ToolDefinition 以便其他模块可以使用
+export { ToolCategory };
 /**
  * 连接 CDP 工具
  * 手动启动调试服务器和 CDP 代理，并连接到微信小程序
@@ -1404,7 +1395,6 @@ export const captureAppServiceNetwork = {
         }
     },
 };
-/** 所有微信小程序工具 */
 export const wechatTools = [
     connectCdp,
     disconnectCdp,

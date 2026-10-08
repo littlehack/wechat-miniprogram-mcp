@@ -172,6 +172,70 @@ export interface SourceRangeResult {
   isCompressed: boolean;
 }
 
+/** 函数索引条目 */
+export interface FunctionIndexEntry {
+  name: string;
+  scriptId: string;
+  url: string;
+  startOffset: number;
+  endOffset: number;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  type: 'function' | 'method' | 'arrow' | 'class' | 'constructor';
+  /** 是否为生命周期方法 */
+  isLifecycle: boolean;
+  /** 是否为事件处理函数 */
+  isEventHandler: boolean;
+  /** 是否为网络请求相关 */
+  isNetworkRelated: boolean;
+}
+
+/** 字符串索引条目 */
+export interface StringIndexEntry {
+  value: string;
+  scriptId: string;
+  url: string;
+  offset: number;
+  lineNumber: number;
+  columnNumber: number;
+  /** 是否为 URL 字符串 */
+  isUrl: boolean;
+  /** 是否为 API 路径 */
+  isApiPath: boolean;
+  /** 是否为加密/签名相关 */
+  isCryptoRelated: boolean;
+}
+
+/** URL/API 索引条目 */
+export interface UrlApiIndexEntry {
+  url: string;
+  scriptId: string;
+  scriptUrl: string;
+  offset: number;
+  lineNumber: number;
+  columnNumber: number;
+  /** 请求方法（如 POST, GET） */
+  method?: string;
+  /** 是否为加密/签名相关调用 */
+  isCryptoRelated: boolean;
+}
+
+/** 代码分析候选结果 */
+export interface AnalysisCandidate {
+  function: string;
+  scriptId: string;
+  url: string;
+  line: number;
+  column: number;
+  callers: Array<{function: string; scriptId: string; line: number}>;
+  callees: Array<{function: string; scriptId: string; line: number}>;
+  relatedStrings: string[];
+  relatedUrls: string[];
+  reason: string;
+}
+
 /** CDP 客户端类 */
 export class CDPClient {
   private ws: WebSocket | null = null;
@@ -214,6 +278,13 @@ export class CDPClient {
 
   // 源码缓存（Script Registry 核心）
   private sourceCache = new Map<string, SourceCacheEntry>();
+
+  // 增强的 Script Registry 索引
+  private functionIndex: Map<string, FunctionIndexEntry[]> = new Map(); // scriptId -> functions
+  private allFunctions: FunctionIndexEntry[] = [];
+  private stringIndex: StringIndexEntry[] = [];
+  private urlApiIndex: UrlApiIndexEntry[] = [];
+  private indexBuilt = false;
 
   // 直连模式的 WebSocket URL
   private directWsUrl?: string;
@@ -381,6 +452,16 @@ export class CDPClient {
             headers: params.request.headers || {},
             timestamp: params.timestamp,
           };
+          // 捕获 initiator 信息（用于请求溯源）
+          if (params.initiator) {
+            request.initiator = {
+              type: params.initiator.type || 'other',
+              url: params.initiator.url,
+              lineNumber: params.initiator.lineNumber,
+              columnNumber: params.initiator.columnNumber,
+              stack: params.initiator.stack,
+            };
+          }
           this.networkRequests.set(params.requestId, request);
           debugLogger(`[CDP客户端] 网络请求: ${params.request.method} ${params.request.url}`);
         });
@@ -936,6 +1017,506 @@ export class CDPClient {
   clearSourceCache(): void {
     this.sourceCache.clear();
     infoLogger('[CDP客户端] 源码缓存已清空');
+  }
+
+  /**
+   * 构建增强的 Script Registry 索引
+   * 解析所有已缓存脚本，建立函数、字符串、URL 索引
+   */
+  buildIndex(): void {
+    this.allFunctions = [];
+    this.functionIndex.clear();
+    this.stringIndex = [];
+    this.urlApiIndex = [];
+
+    const lifecycleMethods = new Set([
+      'onLoad', 'onShow', 'onReady', 'onHide', 'onUnload', 'onPageScroll',
+      'onReachBottom', 'onShareAppMessage', 'onTabItemTap', 'onResize', 'onRouteDone',
+      'onPullDownRefresh', 'onShareTimeline', 'onAddToFavorites',
+      'created', 'attached', 'detached', 'ready', 'moved',
+    ]);
+
+    const eventHandlerPattern = /^(on[A-Z]|handle[A-Z]|_on[A-Z]|tap[A-Z]|click[A-Z]|bind[A-Z]|catch[A-Z])/;
+    const networkPatterns = /request|fetch|ajax|xhr|upload|download|http|api|sign|encrypt|decrypt|token|auth|crypto/i;
+    const cryptoPatterns = /sign|encrypt|decrypt|crypto|md5|sha|hmac|aes|rsa|base64|token|secret|key|iv|cipher|hash/i;
+
+    for (const [scriptId, entry] of this.sourceCache) {
+      const source = entry.source;
+      const url = entry.url;
+
+      // 建立函数索引
+      const functions = this.extractFunctions(source, scriptId, url);
+      this.functionIndex.set(scriptId, functions);
+      this.allFunctions.push(...functions);
+
+      // 建立字符串索引
+      this.extractStrings(source, scriptId, url);
+
+      // 建立 URL/API 索引
+      this.extractUrls(source, scriptId, url);
+    }
+
+    // 标记生命周期和事件处理
+    for (const fn of this.allFunctions) {
+      fn.isLifecycle = lifecycleMethods.has(fn.name);
+      fn.isEventHandler = eventHandlerPattern.test(fn.name);
+      fn.isNetworkRelated = networkPatterns.test(fn.name);
+    }
+
+    // 标记字符串
+    for (const str of this.stringIndex) {
+      str.isUrl = /^https?:\/\//.test(str.value) || /^wss?:\/\//.test(str.value);
+      str.isApiPath = /^\//.test(str.value) && str.value.length > 3 && str.value.length < 200;
+      str.isCryptoRelated = cryptoPatterns.test(str.value);
+    }
+
+    // 标记 URL/API
+    for (const api of this.urlApiIndex) {
+      api.isCryptoRelated = cryptoPatterns.test(api.url);
+    }
+
+    this.indexBuilt = true;
+    infoLogger(`[CDP客户端] 索引构建完成: ${this.allFunctions.length} 个函数, ${this.stringIndex.length} 个字符串, ${this.urlApiIndex.length} 个 URL/API`);
+  }
+
+  /**
+   * 从源码中提取函数定义
+   */
+  private extractFunctions(source: string, scriptId: string, url: string): FunctionIndexEntry[] {
+    const functions: FunctionIndexEntry[] = [];
+
+    // 匹配 function 声明
+    const funcDeclRegex = /(?:function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*\{)/g;
+    // 匹配方法定义 (object.method = function 或 method(...) {)
+    const methodRegex = /(?:(\.[\w$]+)\s*=\s*function|([\w$]+)\s*:\s*function|(?:^|\s)([\w$]+)\s*\([^)]*\)\s*\{)/gm;
+    // 匹配箭头函数
+    const arrowRegex = /(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>/g;
+    // 匹配 class 定义
+    const classRegex = /class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*(?:extends\s+[a-zA-Z_$][a-zA-Z0-9_$]*)?\s*\{/g;
+
+    let match: RegExpExecArray | null;
+
+    // 函数声明
+    while ((match = funcDeclRegex.exec(source)) !== null) {
+      const name = match[1];
+      if (!name) continue;
+      const {lineNumber, columnNumber} = this.offsetToLineColumn(this.sourceCache.get(scriptId)!, match.index);
+      functions.push({
+        name,
+        scriptId,
+        url,
+        startOffset: match.index,
+        endOffset: this.findMatchingBrace(source, match.index + match[0].length - 1),
+        startLine: lineNumber,
+        startColumn: columnNumber,
+        endLine: 0, // 会在后面计算
+        endColumn: 0,
+        type: 'function',
+        isLifecycle: false,
+        isEventHandler: false,
+        isNetworkRelated: false,
+      });
+    }
+
+    // 类方法
+    while ((match = classRegex.exec(source)) !== null) {
+      const name = match[1];
+      if (!name) continue;
+      const {lineNumber, columnNumber} = this.offsetToLineColumn(this.sourceCache.get(scriptId)!, match.index);
+      functions.push({
+        name,
+        scriptId,
+        url,
+        startOffset: match.index,
+        endOffset: this.findMatchingBrace(source, match.index + match[0].length - 1),
+        startLine: lineNumber,
+        startColumn: columnNumber,
+        endLine: 0,
+        endColumn: 0,
+        type: 'class',
+        isLifecycle: false,
+        isEventHandler: false,
+        isNetworkRelated: false,
+      });
+    }
+
+    // 箭头函数和对象方法
+    while ((match = arrowRegex.exec(source)) !== null) {
+      const name = match[1];
+      if (!name) continue;
+      const {lineNumber, columnNumber} = this.offsetToLineColumn(this.sourceCache.get(scriptId)!, match.index);
+      functions.push({
+        name,
+        scriptId,
+        url,
+        startOffset: match.index,
+        endOffset: source.indexOf('\n', match.index),
+        startLine: lineNumber,
+        startColumn: columnNumber,
+        endLine: lineNumber,
+        endColumn: 0,
+        type: 'arrow',
+        isLifecycle: false,
+        isEventHandler: false,
+        isNetworkRelated: false,
+      });
+    }
+
+    return functions;
+  }
+
+  /**
+   * 查找匹配的右花括号位置
+   */
+  private findMatchingBrace(source: string, startOffset: number): number {
+    let depth = 0;
+    let inString = false;
+    let stringChar = '';
+    let inComment = false;
+    let inLineComment = false;
+
+    for (let i = startOffset; i < source.length; i++) {
+      const ch = source[i];
+      const prev = i > 0 ? source[i - 1] : '';
+
+      if (inLineComment) {
+        if (ch === '\n') inLineComment = false;
+        continue;
+      }
+      if (inComment) {
+        if (ch === '/' && prev === '*') inComment = false;
+        continue;
+      }
+      if (inString) {
+        if (ch === stringChar && prev !== '\\') inString = false;
+        continue;
+      }
+
+      if (ch === '/' && i + 1 < source.length) {
+        if (source[i + 1] === '/') { inLineComment = true; continue; }
+        if (source[i + 1] === '*') { inComment = true; continue; }
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        inString = true;
+        stringChar = ch;
+        continue;
+      }
+
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) return i;
+      }
+    }
+    return source.length - 1;
+  }
+
+  /**
+   * 从源码中提取字符串字面量
+   */
+  private extractStrings(source: string, scriptId: string, url: string): void {
+    // 匹配单引号、双引号、反引号字符串
+    const stringRegex = /(?:(?<=[:,\s(=])(?:`([^`\\]*(?:\\.[^`\\]*)*)`|"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'))/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = stringRegex.exec(source)) !== null) {
+      const value = match[1] || match[2] || match[3];
+      if (!value || value.length < 2 || value.length > 500) continue;
+
+      // 跳过常见无意义字符串
+      if (/^(true|false|null|undefined|self|this|function|return|var|let|const|if|else|for|while|do|switch|case|break|continue|new|delete|typeof|instanceof|in|of|void|throw|try|catch|finally|with|debugger|import|export|default|class|extends|super|static)$/.test(value)) continue;
+
+      const entry = this.sourceCache.get(scriptId);
+      if (!entry) continue;
+      const {lineNumber, columnNumber} = this.offsetToLineColumn(entry, match.index);
+
+      this.stringIndex.push({
+        value,
+        scriptId,
+        url,
+        offset: match.index,
+        lineNumber,
+        columnNumber,
+        isUrl: false,
+        isApiPath: false,
+        isCryptoRelated: false,
+      });
+    }
+  }
+
+  /**
+   * 从源码中提取 URL 和 API 路径
+   */
+  private extractUrls(source: string, scriptId: string, url: string): void {
+    // 匹配 URL 模式
+    const urlRegex = /(?:(?:https?|wss?):\/\/[^\s"',;)}\]]+|(?<=['"])(?:\/[a-zA-Z0-9_/]+(?:\?[^'"]*)?)(?=['"]))/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = urlRegex.exec(source)) !== null) {
+      const urlValue = match[0];
+      if (urlValue.length < 5) continue;
+
+      const entry = this.sourceCache.get(scriptId);
+      if (!entry) continue;
+      const {lineNumber, columnNumber} = this.offsetToLineColumn(entry, match.index);
+
+      // 尝试推断 HTTP 方法
+      let method: string | undefined;
+      const contextBefore = source.substring(Math.max(0, match.index - 100), match.index);
+      if (/\bPOST\b/i.test(contextBefore)) method = 'POST';
+      else if (/\bGET\b/i.test(contextBefore)) method = 'GET';
+      else if (/\bPUT\b/i.test(contextBefore)) method = 'PUT';
+      else if (/\bDELETE\b/i.test(contextBefore)) method = 'DELETE';
+
+      this.urlApiIndex.push({
+        url: urlValue,
+        scriptId,
+        scriptUrl: url,
+        offset: match.index,
+        lineNumber,
+        columnNumber,
+        method,
+        isCryptoRelated: false,
+      });
+    }
+  }
+
+  /**
+   * 反向分析：根据查询找到候选函数
+   * MCP 自己完成搜索、索引、排序和关联
+   */
+  reverseAnalyze(query: string): AnalysisCandidate[] {
+    // 如果索引未构建，先构建
+    if (!this.indexBuilt) {
+      this.buildIndex();
+    }
+
+    const candidates: AnalysisCandidate[] = [];
+    const queryLower = query.toLowerCase();
+
+    // 1. 在函数名中搜索
+    for (const fn of this.allFunctions) {
+      if (fn.name.toLowerCase().includes(queryLower)) {
+        candidates.push(this.buildCandidate(fn, `函数名匹配: "${fn.name}"`));
+      }
+    }
+
+    // 2. 在字符串中搜索
+    const matchedStrings = this.stringIndex.filter(s =>
+      s.value.toLowerCase().includes(queryLower)
+    );
+    for (const str of matchedStrings) {
+      // 找到包含该字符串的函数
+      const containingFn = this.findContainingFunction(str.scriptId, str.offset);
+      if (containingFn) {
+        const existing = candidates.find(c =>
+          c.function === containingFn.name && c.scriptId === containingFn.scriptId
+        );
+        if (existing) {
+          existing.relatedStrings.push(str.value);
+        } else {
+          candidates.push({
+            function: containingFn.name,
+            scriptId: containingFn.scriptId,
+            url: containingFn.url,
+            line: containingFn.startLine,
+            column: containingFn.startColumn,
+            callers: [],
+            callees: [],
+            relatedStrings: [str.value],
+            relatedUrls: [],
+            reason: `包含字符串 "${str.value.substring(0, 50)}"`,
+          });
+        }
+      }
+    }
+
+    // 3. 在 URL/API 索引中搜索
+    const matchedUrls = this.urlApiIndex.filter(u =>
+      u.url.toLowerCase().includes(queryLower)
+    );
+    for (const api of matchedUrls) {
+      const containingFn = this.findContainingFunction(api.scriptId, api.offset);
+      if (containingFn) {
+        const existing = candidates.find(c =>
+          c.function === containingFn.name && c.scriptId === containingFn.scriptId
+        );
+        if (existing) {
+          existing.relatedUrls.push(api.url);
+        } else {
+          candidates.push({
+            function: containingFn.name,
+            scriptId: containingFn.scriptId,
+            url: containingFn.url,
+            line: containingFn.startLine,
+            column: containingFn.startColumn,
+            callers: [],
+            callees: [],
+            relatedStrings: [],
+            relatedUrls: [api.url],
+            reason: `包含 URL/API: "${api.url.substring(0, 80)}"`,
+          });
+        }
+      }
+    }
+
+    // 4. 对候选进行评分和排序
+    // 优先级：生命周期 > 事件处理 > 网络相关 > 其他
+    candidates.sort((a, b) => {
+      const aFn = this.allFunctions.find(f => f.name === a.function && f.scriptId === a.scriptId);
+      const bFn = this.allFunctions.find(f => f.name === b.function && f.scriptId === b.scriptId);
+      const aScore = (aFn?.isLifecycle ? 100 : 0) + (aFn?.isEventHandler ? 50 : 0) + (aFn?.isNetworkRelated ? 30 : 0) + a.relatedStrings.length + a.relatedUrls.length;
+      const bScore = (bFn?.isLifecycle ? 100 : 0) + (bFn?.isEventHandler ? 50 : 0) + (bFn?.isNetworkRelated ? 30 : 0) + b.relatedStrings.length + b.relatedUrls.length;
+      return bScore - aScore;
+    });
+
+    return candidates.slice(0, 20); // 最多返回 20 个候选
+  }
+
+  /**
+   * 构建候选结果
+   */
+  private buildCandidate(fn: FunctionIndexEntry, reason: string): AnalysisCandidate {
+    return {
+      function: fn.name,
+      scriptId: fn.scriptId,
+      url: fn.url,
+      line: fn.startLine,
+      column: fn.startColumn,
+      callers: this.findCallers(fn.name, fn.scriptId),
+      callees: this.findCallees(fn.scriptId, fn.startOffset, fn.endOffset),
+      relatedStrings: [],
+      relatedUrls: [],
+      reason,
+    };
+  }
+
+  /**
+   * 查找包含指定偏移量的函数
+   */
+  private findContainingFunction(scriptId: string, offset: number): FunctionIndexEntry | null {
+    const functions = this.functionIndex.get(scriptId) || [];
+    for (const fn of functions) {
+      if (offset >= fn.startOffset && offset <= fn.endOffset) {
+        return fn;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 查找函数的调用者
+   */
+  findCallers(functionName: string, scriptId?: string): Array<{function: string; scriptId: string; line: number}> {
+    const callers: Array<{function: string; scriptId: string; line: number}> = [];
+    const searchScripts = scriptId
+      ? this.sourceCache.get(scriptId) ? [this.sourceCache.get(scriptId)!] : []
+      : Array.from(this.sourceCache.values());
+
+    for (const entry of searchScripts) {
+      if (!entry) continue;
+      // 搜索 functionName( 模式
+      const callRegex = new RegExp(`\\b${this.escapeRegex(functionName)}\\s*\\(`, 'g');
+      let match: RegExpExecArray | null;
+      while ((match = callRegex.exec(entry.source)) !== null) {
+        const {lineNumber} = this.offsetToLineColumn(entry, match.index);
+        const containingFn = this.findContainingFunction(entry.scriptId, match.index);
+        if (containingFn && containingFn.name !== functionName) {
+          callers.push({
+            function: containingFn.name,
+            scriptId: entry.scriptId,
+            line: lineNumber,
+          });
+        }
+      }
+    }
+
+    // 去重
+    const seen = new Set<string>();
+    return callers.filter(c => {
+      const key = `${c.function}:${c.scriptId}:${c.line}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /**
+   * 查找函数体内调用的其他函数
+   */
+  findCallees(scriptId: string, startOffset: number, endOffset: number): Array<{function: string; scriptId: string; line: number}> {
+    const callees: Array<{function: string; scriptId: string; line: number}> = [];
+    const entry = this.sourceCache.get(scriptId);
+    if (!entry) return callees;
+
+    const body = entry.source.substring(startOffset, Math.min(endOffset, entry.source.length));
+    // 匹配 xxx( 或 obj.xxx( 模式
+    const callRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*)\s*\(/g;
+    let match: RegExpExecArray | null;
+    const seen = new Set<string>();
+
+    while ((match = callRegex.exec(body)) !== null) {
+      const name = match[1];
+      // 跳过常见关键字和内置函数
+      if (/^(if|for|while|switch|catch|function|return|typeof|instanceof|new|delete|void|throw|try|eval|parseInt|parseFloat|isNaN|isFinite|undefined|null|true|false|this|self|window|document|console|Math|JSON|Array|Object|String|Number|Boolean|RegExp|Date|Error|Promise|Map|Set|WeakMap|WeakSet|Symbol|Proxy|Reflect|globalThis)$/.test(name)) continue;
+      if (seen.has(name)) continue;
+      seen.add(name);
+
+      const absoluteOffset = startOffset + match.index;
+      const {lineNumber} = this.offsetToLineColumn(entry, absoluteOffset);
+      callees.push({
+        function: name,
+        scriptId,
+        line: lineNumber,
+      });
+    }
+
+    return callees.slice(0, 30); // 限制返回数量
+  }
+
+  /**
+   * 转义正则表达式特殊字符
+   */
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * 查找函数定义位置
+   */
+  findFunction(name: string): FunctionIndexEntry[] {
+    if (!this.indexBuilt) {
+      this.buildIndex();
+    }
+    return this.allFunctions.filter(f => f.name === name);
+  }
+
+  /**
+   * 检查索引是否已构建
+   */
+  isIndexBuilt(): boolean {
+    return this.indexBuilt;
+  }
+
+  /**
+   * 获取索引统计
+   */
+  getIndexStats(): {
+    functions: number;
+    strings: number;
+    urls: number;
+    lifecycleMethods: number;
+    eventHandlers: number;
+    networkRelated: number;
+  } {
+    return {
+      functions: this.allFunctions.length,
+      strings: this.stringIndex.length,
+      urls: this.urlApiIndex.length,
+      lifecycleMethods: this.allFunctions.filter(f => f.isLifecycle).length,
+      eventHandlers: this.allFunctions.filter(f => f.isEventHandler).length,
+      networkRelated: this.allFunctions.filter(f => f.isNetworkRelated).length,
+    };
   }
 
   /**
